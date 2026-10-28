@@ -14,6 +14,7 @@ import {
 import { connectDB } from "./config/db.config.js";
 import cron from "node-cron";
 import { cleanupUnusedUploads } from "./jobs/cleanupUploads.js";
+import { registerLocalUploads } from "./local/uploads.js";
 
 export const app = express();
 
@@ -27,6 +28,8 @@ app.use(
 app.use(cookieParser());
 app.use(compression());
 app.use(express.json());
+app.get("/api/time", (_, res) => res.json({ now: Date.now() }));
+if (process.env.LOCAL_DEMO === "true") registerLocalUploads(app);
 
 // DB connection for Vercel serveless deployment
 if (process.env.VERCEL) {

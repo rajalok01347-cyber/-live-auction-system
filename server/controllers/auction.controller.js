@@ -1,7 +1,6 @@
-import getImageUrl from "../services/cloudinaryService.js";
+import { acceptBid, snapshot, validMoney } from "../services/auction-engine.js";
 import Product from "../models/product.model.js";
 import mongoose from "mongoose";
-import { getIO } from "../socket/index.js";
 import Upload from "../models/upload.model.js";
 
 export const createAuction = async (req, res) => {
@@ -9,6 +8,7 @@ export const createAuction = async (req, res) => {
     const {
       itemName,
       startingPrice,
+      increment,
       itemDescription,
       itemCategory,
       itemStartDate,
@@ -20,12 +20,15 @@ export const createAuction = async (req, res) => {
 
     const start = itemStartDate ? new Date(itemStartDate) : new Date();
     const end = new Date(itemEndDate);
-    if (end <= start) {
+    if (!Number.isFinite(+start) || !Number.isFinite(+end) || end <= start || end <= new Date()) {
       return res
         .status(400)
         .json({ message: "Auction end date must be after start date" });
     }
 
+    if (!validMoney(Number(startingPrice)) || !validMoney(Number(increment))) {
+      return res.status(400).json({ message: "Start price and increment must be positive amounts with at most two decimal places" });
+    }
     const upload = await Upload.findOne({ formId });
 
     if (!upload) {
@@ -43,6 +46,7 @@ export const createAuction = async (req, res) => {
     const newAuction = new Product({
       itemName,
       startingPrice,
+      increment,
       currentPrice: startingPrice,
       itemDescription,
       itemCategory,
@@ -81,7 +85,7 @@ export const showAuction = async (req, res) => {
     const auction = await Product.find(filter)
       .populate("seller", "name")
       .select(
-        "itemName itemDescription currentPrice bids itemEndDate itemCategory itemImage seller",
+        "itemName itemDescription currentPrice bids itemStartDate itemEndDate increment closed finalPrice itemCategory itemImage seller",
       )
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -92,6 +96,12 @@ export const showAuction = async (req, res) => {
       itemDescription: item.itemDescription,
       currentPrice: item.currentPrice,
       bidsCount: item.bids.length,
+      itemStartDate: item.itemStartDate,
+      itemEndDate: item.itemEndDate,
+      serverNow: Date.now(),
+      increment: item.increment || 1,
+      closed: item.closed,
+      finalPrice: item.finalPrice,
       timeLeft: Math.max(0, new Date(item.itemEndDate) - new Date()),
       itemCategory: item.itemCategory,
       sellerName: item.seller.name,
@@ -116,139 +126,18 @@ export const showAuction = async (req, res) => {
 
 export const auctionById = async (req, res) => {
   try {
-    const { id } = req.params;
-    const auction = await Product.findById(id)
-      .populate("seller", "name")
-      .populate("bids.bidder", "name")
-      .populate("winner", "name");
-
-    if (!auction) {
-      return res.status(404).json({ message: "Auction not found" });
-    }
-
-    // Auto-set winner when auction has ended and has bids but no winner yet
-    const isExpired = new Date(auction.itemEndDate) < new Date();
-    if (isExpired && !auction.winner && auction.bids.length > 0) {
-      // Highest bid = first after sorting descending
-      const sortedBids = [...auction.bids].sort(
-        (a, b) => b.bidAmount - a.bidAmount,
-      );
-      const highestBid = sortedBids[0];
-      auction.winner = highestBid.bidder;
-      auction.isSold = true;
-      await auction.save();
-      // Re-populate winner after save
-      await auction.populate("winner", "name");
-    }
-
-    // If auction is expired, only allow seller and bidders to view it
-    if (isExpired) {
-      const userId = req.user.id;
-      const isSeller = auction.seller._id.toString() === userId;
-      const isBidder = auction.bids.some(
-        (b) => b.bidder?._id?.toString() === userId,
-      );
-      if (!isSeller && !isBidder) {
-        return res.status(403).json({
-          message: "This auction has ended and is no longer available",
-        });
-      }
-    }
-
-    auction.bids.sort((a, b) => new Date(b.bidTime) - new Date(a.bidTime));
-    res.status(200).json(auction);
-  } catch (error) {
-    return res
-      .status(500)
-      .json({ message: "Error fetching auctions", error: error.message });
-  }
+    if (!mongoose.isValidObjectId(req.params.id)) return res.status(404).json({ message: "Auction not found" });
+    const auction = await snapshot(req.params.id);
+    if (!auction) return res.status(404).json({ message: "Auction not found" });
+    res.json(auction);
+  } catch (error) { res.status(500).json({ message: "Could not load auction" }); }
 };
 
 export const placeBid = async (req, res) => {
   try {
-    const bidAmount = Number(req.body.bidAmount);
-    const user = req.user.id;
-    const { id } = req.params;
-
-    if (isNaN(bidAmount)) {
-      return res.status(400).json({ message: "Invalid bid amount" });
-    }
-
-    const product = await Product.findById(id);
-    if (!product) return res.status(404).json({ message: "Auction not found" });
-
-    // Prevent seller from bidding on their own auction
-    if (product.seller.toString() === user) {
-      return res
-        .status(403)
-        .json({ message: "You cannot bid on your own auction" });
-    }
-
-    if (new Date(product.itemEndDate) < new Date())
-      return res.status(400).json({ message: "Auction has already ended" });
-
-    const minBid = Math.max(product.currentPrice, product.startingPrice) + 1;
-    const maxBid = Math.max(product.currentPrice, product.startingPrice) + 10;
-    if (bidAmount < minBid)
-      return res
-        .status(400)
-        .json({ message: `Bid must be at least Rs ${minBid}` });
-    if (bidAmount > maxBid)
-      return res
-        .status(400)
-        .json({ message: `Bid must be at max Rs ${maxBid}` });
-
-    const updated = await Product.findOneAndUpdate(
-      {
-        _id: id,
-        currentPrice: product.currentPrice,
-        itemEndDate: { $gt: new Date() },
-      },
-      {
-        $set: { currentPrice: bidAmount },
-        $push: { bids: { bidder: user, bidAmount } },
-      },
-      { new: true },
-    );
-
-    if (!updated) {
-      return res
-        .status(409)
-        .json({ message: "Bid failed — price changed. Please try again." });
-    }
-
-    // Populate for the response and socket broadcast
-    const populated = await Product.findById(id)
-      .populate("seller", "name")
-      .populate("bids.bidder", "name");
-
-    populated.bids.sort((a, b) => new Date(b.bidTime) - new Date(a.bidTime));
-
-    // Broadcast to all socket users in this auction room
-    try {
-      const io = getIO();
-      const bidderName =
-        populated.bids.find((b) => b.bidder?._id?.toString() === user)?.bidder
-          ?.name || "Someone";
-
-      io.to(id).emit("auction:bidPlaced", {
-        auction: populated,
-        bidderName,
-        bidderId: user,
-        bidAmount,
-      });
-    } catch (socketErr) {
-      console.error("Socket broadcast error:", socketErr.message);
-    }
-
-    res
-      .status(200)
-      .json({ message: "Bid placed successfully", auction: populated });
-  } catch (error) {
-    res
-      .status(500)
-      .json({ message: "Error placing bid", error: error.message });
-  }
+    const auction = await acceptBid(req.params.id, req.user.id, Number(req.body.bidAmount));
+    res.json({ message: "Bid placed successfully", auction });
+  } catch (error) { res.status(error.status || 500).json({ message: error.message }); }
 };
 
 export const dashboardData = async (req, res) => {
@@ -290,6 +179,12 @@ export const dashboardData = async (req, res) => {
       itemDescription: item.itemDescription,
       currentPrice: item.currentPrice,
       bidsCount: item.bids.length,
+      itemStartDate: item.itemStartDate,
+      itemEndDate: item.itemEndDate,
+      serverNow: Date.now(),
+      increment: item.increment || 1,
+      closed: item.closed,
+      finalPrice: item.finalPrice,
       timeLeft: Math.max(0, new Date(item.itemEndDate) - new Date()),
       itemCategory: item.itemCategory,
       sellerName: item.seller.name,
@@ -306,6 +201,12 @@ export const dashboardData = async (req, res) => {
       itemDescription: item.itemDescription,
       currentPrice: item.currentPrice,
       bidsCount: item.bids.length,
+      itemStartDate: item.itemStartDate,
+      itemEndDate: item.itemEndDate,
+      serverNow: Date.now(),
+      increment: item.increment || 1,
+      closed: item.closed,
+      finalPrice: item.finalPrice,
       timeLeft: Math.max(0, new Date(item.itemEndDate) - new Date()),
       itemCategory: item.itemCategory,
       sellerName: item.seller.name,
@@ -338,7 +239,7 @@ export const myAuction = async (req, res) => {
     const auction = await Product.find(filter)
       .populate("seller", "name")
       .select(
-        "itemName itemDescription currentPrice bids itemEndDate itemCategory itemImage seller",
+        "itemName itemDescription currentPrice bids itemStartDate itemEndDate increment closed finalPrice itemCategory itemImage seller",
       )
       .sort({ createdAt: -1 })
       .skip(skip)
@@ -349,6 +250,12 @@ export const myAuction = async (req, res) => {
       itemDescription: item.itemDescription,
       currentPrice: item.currentPrice,
       bidsCount: item.bids.length,
+      itemStartDate: item.itemStartDate,
+      itemEndDate: item.itemEndDate,
+      serverNow: Date.now(),
+      increment: item.increment || 1,
+      closed: item.closed,
+      finalPrice: item.finalPrice,
       timeLeft: Math.max(0, new Date(item.itemEndDate) - new Date()),
       itemCategory: item.itemCategory,
       sellerName: item.seller.name,
@@ -379,31 +286,45 @@ export const myBids = async (req, res) => {
     const userId = new mongoose.Types.ObjectId(req.user.id);
 
     const filter = { "bids.bidder": userId };
+    const tab = req.query.status || "active";
+    if (!["all", "active", "won", "lost"].includes(tab)) return res.status(400).json({ message: "Invalid dashboard filter" });
+    if (tab === "active") filter.closed = { $ne: true };
+    if (tab === "won") { filter.closed = true; filter.winner = userId; }
+    if (tab === "lost") { filter.closed = true; filter.winner = { $ne: userId }; }
     const total = await Product.countDocuments(filter);
 
     const auction = await Product.find(filter)
       .populate("seller", "name")
       .populate("winner", "name")
       .select(
-        "itemName itemDescription currentPrice bids itemEndDate itemCategory itemImage seller winner isSold",
+        "itemName itemDescription currentPrice bids itemStartDate itemEndDate increment closed finalPrice itemCategory itemImage seller winner isSold",
       )
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit);
 
     const formatted = auction.map((item) => {
-      const isExpired = new Date(item.itemEndDate) < new Date();
+      const isExpired = item.closed;
       return {
         _id: item._id,
         itemName: item.itemName,
         itemDescription: item.itemDescription,
         currentPrice: item.currentPrice,
         bidsCount: item.bids.length,
-        timeLeft: Math.max(0, new Date(item.itemEndDate) - new Date()),
+        itemStartDate: item.itemStartDate,
+      itemEndDate: item.itemEndDate,
+      serverNow: Date.now(),
+      increment: item.increment || 1,
+      closed: item.closed,
+      finalPrice: item.finalPrice,
+      timeLeft: Math.max(0, new Date(item.itemEndDate) - new Date()),
         itemCategory: item.itemCategory,
         sellerName: item.seller.name,
         itemPhoto: item.itemImage?.url,
         isExpired,
+        finalPrice: item.finalPrice,
+        outcome: item.closed ? (String(item.winner?._id) === String(userId) ? "won" : "lost") : "active",
+        leading: String(item.bids.at(-1)?.bidder) === String(userId),
         winner: item.winner
           ? { _id: item.winner._id, name: item.winner.name }
           : null,

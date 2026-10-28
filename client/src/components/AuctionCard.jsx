@@ -1,9 +1,14 @@
+import { useServerNow } from "../hooks/useServerNow.js";
 import { Link } from "react-router";
 import { usePrefetchHandlers } from "../hooks/useAuction.js";
 
 export default function AuctionCard({ auction }) {
-  const daysLeft = Math.ceil(auction.timeLeft / (1000 * 60 * 60 * 24));
-  const isActive = daysLeft > 0;
+  const now = useServerNow();
+  const remaining = now !== null && auction.itemEndDate ? Math.max(0, new Date(auction.itemEndDate) - now) : auction.timeLeft;
+  const scheduled = now !== null && new Date(auction.itemStartDate) > now;
+  const isActive = !auction.closed && remaining > 0 && !scheduled;
+  const seconds = Math.max(0, Math.ceil(remaining / 1000));
+  const clock = seconds >= 86400 ? `${Math.floor(seconds / 86400)}d ${Math.floor(seconds % 86400 / 3600)}h` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m ${seconds % 60}s`;
   const { prefetchAuction } = usePrefetchHandlers();
 
   return (
@@ -33,11 +38,12 @@ export default function AuctionCard({ auction }) {
                 : "bg-gray-700/80 text-white"
             }`}
           >
-            {isActive ? `${daysLeft}d left` : "Ended"}
+            {scheduled ? "Scheduled" : isActive ? clock : auction.closed ? "Closed" : "Finalizing"}
           </span>
         </div>
       </div>
 
+      {auction.outcome && <p className="px-4 pt-3 text-sm font-semibold text-indigo-700">{auction.outcome === "active" ? (auction.leading ? "Winning" : "Outbid") : auction.outcome === "won" ? "You won" : "You lost"}</p>}
       {/* Content */}
       <div className="p-3.5">
         <h3 className="font-semibold text-sm text-gray-900 mb-0.5 line-clamp-1 group-hover:text-indigo-600 transition-colors">
@@ -50,10 +56,10 @@ export default function AuctionCard({ auction }) {
         <div className="flex items-end justify-between">
           <div>
             <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wider">
-              Current Bid
+              {auction.closed ? "Final price" : "Current bid"}
             </p>
             <p className="text-lg font-bold text-gray-900 tabular-nums">
-              Rs {auction.currentPrice || auction.startingPrice}
+              Rs {auction.closed ? (auction.finalPrice ?? "—") : (auction.currentPrice || auction.startingPrice)}
             </p>
           </div>
           <div className="text-right">

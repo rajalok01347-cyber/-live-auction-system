@@ -7,6 +7,7 @@ export const getLocationFromIp = async (ip) => {
     city: "Unknown",
     isp: "Unknown",
   };
+  if (process.env.LOCAL_DEMO === "true") return defaultLocation;
 
   try {
     // Note: ip-api.com free tier only supports HTTP.

@@ -34,12 +34,16 @@ const productSchema = new mongoose.Schema(
     startingPrice: {
       type: Number,
       required: true,
-      min: [1, "Starting price must be at least 1"],
+      min: [0.01, "Starting price must be at least 0.01"],
     },
     currentPrice: {
       type: Number,
       default: 0,
     },
+    increment: { type: Number, default: 1, min: 0.01 },
+    closed: { type: Boolean, default: false },
+    finalPrice: { type: Number, default: null },
+    closedAt: { type: Date, default: null },
     itemStartDate: {
       type: Date,
       default: Date.now,

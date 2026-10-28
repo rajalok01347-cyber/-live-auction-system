@@ -1,4 +1,5 @@
 import express from "express";
+import { closeDue } from "../services/auction-engine.js";
 import {
   createAuction,
   showAuction,
@@ -12,6 +13,9 @@ import { secureRoute } from "../middleware/auth.middleware.js";
 
 const auctionRoutes = express.Router();
 auctionRoutes.use(secureRoute);
+auctionRoutes.use(async (req, res, next) => {
+  try { await closeDue(); next(); } catch (error) { next(error); }
+});
 
 auctionRoutes.get("/stats", dashboardData);
 

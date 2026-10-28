@@ -1,6 +1,6 @@
 import { env } from "../config/env.config.js";
 import cloudinary from "../config/cloudinary.config.js";
-import { v4 as uuidv4 } from "uuid";
+import { randomUUID as uuidv4 } from "node:crypto";
 import Upload from "../models/upload.model.js";
 
 // Generate signature

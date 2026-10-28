@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test tests/auction.test.js",
     "dev": "nodemon server.js"
   },
   "author": "Avnish Kumar",
@@ -29,6 +29,7 @@
     "uuidv4": "^6.2.13"
   },
   "devDependencies": {
+    "mongodb-memory-server": "^11.3.0",
     "nodemon": "^3.1.13"
   },
   "overrides": {

@@ -3,6 +3,7 @@ import { app } from "./app.js";
 import { env } from "./config/env.config.js";
 import { connectDB, disconnectDB } from "./config/db.config.js";
 import { initSocket } from "./socket/index.js";
+import { bindAuctionEvents, startAuctionCloser } from "./services/auction-engine.js";
 
 const PORT = env.port;
 
@@ -13,7 +14,8 @@ const startServer = async () => {
   try {
     await connectDB();
     server = http.createServer(app);
-    initSocket(server);
+    bindAuctionEvents(initSocket(server));
+    startAuctionCloser();
 
     server.listen(PORT, () => {
       console.log(

@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import { connectSocket } from "../config/socket.js";
 import toast from "react-hot-toast";
+import { viewAuction } from "../services/auction.service.js";
 
 export const useSocket = (auctionId, currentUserId) => {
   const [activeUsers, setActiveUsers] = useState([]);
@@ -10,12 +11,21 @@ export const useSocket = (auctionId, currentUserId) => {
   const joinedRef = useRef(false);
 
   useEffect(() => {
-    if (!auctionId) return;
+    if (!auctionId || !currentUserId) return;
+    let disposed = false;
+    setLiveAuction(null);
+    const accept = (auction) => {
+      if (disposed || String(auction?._id) !== auctionId) return;
+      setLiveAuction(old => old?._id === auction._id && old.version > auction.version ? old : auction);
+    };
+    const refresh = async () => { try { accept(await viewAuction(auctionId)); } catch { /* Poll or reconnect retries. */ } };
+    const poll = setInterval(refresh, 3000);
 
     const socket = connectSocket();
 
     const handleConnect = () => {
       setIsConnected(true);
+      void refresh();
       if (!joinedRef.current) {
         socket.emit("auction:join", { auctionId });
         joinedRef.current = true;
@@ -39,7 +49,7 @@ export const useSocket = (auctionId, currentUserId) => {
     };
 
     const handleBidPlaced = ({ auction, bidderName, bidAmount, bidderId }) => {
-      setLiveAuction(auction);
+      accept(auction);
       // Only show "X placed a bid" for OTHER users, not yourself
       if (bidderName && bidderId !== currentUserId) {
         toast.success(`${bidderName} placed a bid of Rs ${bidAmount}`);
@@ -67,6 +77,7 @@ export const useSocket = (auctionId, currentUserId) => {
     socket.on("auction:userJoined", handleUserJoined);
     socket.on("auction:userLeft", handleUserLeft);
     socket.on("auction:bidPlaced", handleBidPlaced);
+    socket.on("auction:ended", handleBidPlaced);
     socket.on("auction:error", handleError);
     socket.on("disconnect", handleDisconnect);
 
@@ -76,6 +87,8 @@ export const useSocket = (auctionId, currentUserId) => {
     }
 
     return () => {
+      disposed = true;
+      clearInterval(poll);
       if (socket.connected) {
         socket.emit("auction:leave", { auctionId });
       }
@@ -84,6 +97,7 @@ export const useSocket = (auctionId, currentUserId) => {
       socket.off("auction:userJoined", handleUserJoined);
       socket.off("auction:userLeft", handleUserLeft);
       socket.off("auction:bidPlaced", handleBidPlaced);
+      socket.off("auction:ended", handleBidPlaced);
       socket.off("auction:error", handleError);
       socket.off("disconnect", handleDisconnect);
       joinedRef.current = false;

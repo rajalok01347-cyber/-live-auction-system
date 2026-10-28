@@ -1,3 +1,4 @@
+import { useServerNow } from "../hooks/useServerNow.js";
 import { useRef, useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router";
 import { useSelector } from "react-redux";
@@ -13,6 +14,7 @@ export const ViewAuction = () => {
   const { user } = useSelector((state) => state.auth);
   const currentUserId = user?.user?._id;
   const inputRef = useRef();
+  const serverNow = useServerNow();
   const [bidding, setBidding] = useState(false);
   const [countdown, setCountdown] = useState({
     days: 0,
@@ -28,25 +30,16 @@ export const ViewAuction = () => {
     currentUserId,
   );
 
-  const data = liveAuction || fetchedData;
+  const live = liveAuction?._id === id ? liveAuction : null;
+  const data = live && (!fetchedData || live.version >= fetchedData.version) ? live : fetchedData;
   useDocumentTitle(data?.itemName ? data.itemName : "Auction Details");
 
-  // Live countdown timer — must be called before any early return to satisfy Rules of Hooks
   useEffect(() => {
-    if (!data?.itemEndDate) return;
-    const updateCountdown = () => {
-      const diff = Math.max(0, new Date(data.itemEndDate) - new Date());
-      setCountdown({
-        days: Math.floor(diff / (1000 * 60 * 60 * 24)),
-        hours: Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
-        minutes: Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)),
-        seconds: Math.floor((diff % (1000 * 60)) / 1000),
-      });
-    };
-    updateCountdown();
-    const interval = setInterval(updateCountdown, 1000);
-    return () => clearInterval(interval);
-  }, [data?.itemEndDate]);
+    if (!data?.itemEndDate || serverNow === null) return;
+    const target = new Date(data.itemStartDate) > serverNow ? data.itemStartDate : data.itemEndDate;
+    const diff = Math.max(0, new Date(target) - serverNow);
+    setCountdown({ days: Math.floor(diff / 86400000), hours: Math.floor(diff % 86400000 / 3600000), minutes: Math.floor(diff % 3600000 / 60000), seconds: Math.ceil(diff % 60000 / 1000) });
+  }, [data?.itemEndDate, data?.itemStartDate, serverNow]);
 
   if (isLoading || !data) return <LoadingScreen />;
 
@@ -68,8 +61,10 @@ export const ViewAuction = () => {
     }
   };
 
-  const timeLeft = Math.max(0, new Date(data.itemEndDate) - new Date());
-  const isActive = timeLeft > 0;
+  const timeLeft = serverNow === null ? 0 : Math.max(0, new Date(data.itemEndDate) - serverNow);
+  const scheduled = serverNow !== null && new Date(data.itemStartDate) > serverNow;
+  const isActive = serverNow !== null && timeLeft > 0 && !scheduled && !data.closed;
+  const minBid = data.minNextBid ?? (data.bids.length ? Math.round((data.currentPrice + (data.increment || 1)) * 100) / 100 : data.startingPrice);
   const isSeller = data.seller._id === currentUserId;
   const winnerData = data.winner;
 
@@ -189,7 +184,7 @@ export const ViewAuction = () => {
                         : "bg-gray-800/80 text-white"
                     }`}
                   >
-                    {isActive ? "Live Auction" : "Ended"}
+                    {scheduled ? "Scheduled" : isActive ? "Live Auction" : data.closed ? "Closed" : "Finalizing"}
                   </span>
                   {isConnected && isActive && (
                     <span className="flex items-center gap-1.5 text-xs font-medium text-white bg-gray-900/60 backdrop-blur-sm px-2.5 py-1.5 rounded-full">
@@ -242,7 +237,7 @@ export const ViewAuction = () => {
                       Rs {data.currentPrice}
                     </p>
                     <p className="text-xs text-gray-400 mt-1">
-                      Started at Rs {data.startingPrice}
+                      Starts at Rs {data.startingPrice} · Minimum increment Rs {data.increment || 1}
                     </p>
                   </div>
                   <div className="text-right">
@@ -267,7 +262,7 @@ export const ViewAuction = () => {
               </div>
 
               {/* Time Left Bar */}
-              {isActive ? (
+              {(isActive || scheduled) ? (
                 <div className="bg-red-50 border-t border-red-100 px-6 py-4">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -285,7 +280,7 @@ export const ViewAuction = () => {
                         />
                       </svg>
                       <span className="text-sm text-red-600 font-medium">
-                        Time remaining
+                        {scheduled ? "Starts in" : "Time remaining"}
                       </span>
                     </div>
                     <div className="flex items-center gap-1.5">
@@ -309,14 +304,14 @@ export const ViewAuction = () => {
               ) : (
                 <div className="bg-gray-100 border-t border-gray-200 px-6 py-4 text-center">
                   <p className="text-sm font-medium text-gray-500">
-                    Auction ended
+                    {data.closed ? "Auction closed" : serverNow === null ? "Synchronizing time…" : "Finalizing result…"}
                   </p>
                 </div>
               )}
             </div>
 
             {/* Winner Section */}
-            {!isActive && winnerData && (
+            {data.closed && winnerData && (
               <div className="bg-gradient-to-r from-amber-50 to-yellow-50 rounded-2xl border border-amber-200 shadow-sm p-6">
                 <div className="flex items-center gap-3 mb-3">
                   <div className="bg-amber-100 p-2 rounded-xl">
@@ -351,7 +346,7 @@ export const ViewAuction = () => {
                 </div>
                 <p className="text-sm text-amber-700">
                   Won with a bid of{" "}
-                  <span className="font-bold">Rs {data.currentPrice}</span>
+                  <span className="font-bold">Rs {data.finalPrice}</span>
                 </p>
                 {winnerData._id === currentUserId && (
                   <div className="mt-3 bg-amber-100 text-amber-800 text-sm font-medium px-4 py-2 rounded-xl">
@@ -361,7 +356,7 @@ export const ViewAuction = () => {
               </div>
             )}
 
-            {!isActive && !winnerData && data.bids.length === 0 && (
+            {data.closed && !winnerData && (
               <div className="bg-gray-100 rounded-2xl border border-gray-200 p-6 text-center">
                 <p className="text-sm text-gray-500">
                   This auction ended with no bids.
@@ -369,6 +364,8 @@ export const ViewAuction = () => {
               </div>
             )}
 
+            {!isConnected && <p className="text-sm text-amber-700">Live connection interrupted. Checking for updates automatically.</p>}
+            {isActive && data.bids.length > 0 && <p className="text-sm font-medium text-indigo-700">{data.bids[0].bidder?._id === currentUserId ? "You are leading this auction." : "Current leader: " + (data.bids[0].bidder?.name || "Bidder")}</p>}
             {/* Bid Form */}
             {!isSeller && isActive && (
               <form
@@ -383,7 +380,7 @@ export const ViewAuction = () => {
                     Place your bid
                   </label>
                   <span className="text-xs text-gray-400">
-                    Rs {data.currentPrice + 1} – {data.currentPrice + 10}
+                    Minimum Rs {minBid}
                   </span>
                 </div>
                 <div className="flex gap-2">
@@ -396,10 +393,10 @@ export const ViewAuction = () => {
                       name="bidAmount"
                       id="bidAmount"
                       ref={inputRef}
-                      min={data.currentPrice + 1}
-                      max={data.currentPrice + 10}
+                      min={minBid}
+                      step="0.01"
                       className="w-full pl-10 pr-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-900 font-semibold text-lg tabular-nums placeholder:text-gray-300 placeholder:font-normal focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-400 transition"
-                      placeholder={String(data.currentPrice + 1)}
+                      placeholder={String(minBid)}
                       required
                     />
                   </div>

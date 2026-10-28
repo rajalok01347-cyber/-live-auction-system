@@ -1,4 +1,4 @@
-import Product from "../models/product.model.js";
+import { acceptBid } from "../services/auction-engine.js";
 
 // Track users in auction rooms: { auctionId: Map<socketId, { userId, userName }> }
 const auctionRooms = new Map();
@@ -41,95 +41,11 @@ export const registerAuctionHandlers = (io, socket) => {
     try {
       if (!auctionId || bidAmount == null) return;
 
-      // Coerce to number to prevent string comparison bugs
-      const amount = Number(bidAmount);
-      if (isNaN(amount)) {
-        socket.emit("auction:error", { message: "Invalid bid amount" });
-        return;
-      }
-
-      // Atomic findOneAndUpdate to prevent race conditions
-      const product = await Product.findById(auctionId);
-      if (!product) {
-        socket.emit("auction:error", { message: "Auction not found" });
-        return;
-      }
-
-      if (new Date(product.itemEndDate) < new Date()) {
-        socket.emit("auction:error", {
-          message: "Auction has already ended",
-        });
-        return;
-      }
-
-      // Prevent seller from bidding on own auction
-      if (product.seller.toString() === userId) {
-        socket.emit("auction:error", {
-          message: "You cannot bid on your own auction",
-        });
-        return;
-      }
-
-      const minBid = Math.max(product.currentPrice, product.startingPrice) + 1;
-      const maxBid = Math.max(product.currentPrice, product.startingPrice) + 10;
-
-      if (amount < minBid) {
-        socket.emit("auction:error", {
-          message: `Bid must be at least Rs ${minBid}`,
-        });
-        return;
-      }
-
-      if (amount > maxBid) {
-        socket.emit("auction:error", {
-          message: `Bid must be at max Rs ${maxBid}`,
-        });
-        return;
-      }
-
-      // Use findOneAndUpdate with price condition to prevent race conditions
-      const updatedProduct = await Product.findOneAndUpdate(
-        {
-          _id: auctionId,
-          currentPrice: product.currentPrice, // Only update if price hasn't changed
-          itemEndDate: { $gt: new Date() },
-        },
-        {
-          $set: { currentPrice: amount },
-          $push: {
-            bids: {
-              bidder: userId,
-              bidAmount: amount,
-            },
-          },
-        },
-        { new: true },
-      )
-        .populate("seller", "name")
-        .populate("bids.bidder", "name");
-
-      if (!updatedProduct) {
-        socket.emit("auction:error", {
-          message: "Bid failed — price changed. Please try again.",
-        });
-        return;
-      }
-
-      updatedProduct.bids.sort(
-        (a, b) => new Date(b.bidTime) - new Date(a.bidTime),
-      );
-
-      // Broadcast updated auction data to all users in the room
-      io.to(auctionId).emit("auction:bidPlaced", {
-        auction: updatedProduct,
-        bidderName: userName,
-        bidAmount: amount,
-        message: `${userName} placed a bid of Rs ${amount}`,
-      });
+      await acceptBid(auctionId, userId, Number(bidAmount));
     } catch (error) {
       console.error("Socket bid error:", error.message);
       socket.emit("auction:error", {
-        message: "Error placing bid",
+        message: error.message || "Error placing bid",
       });
     }
   });

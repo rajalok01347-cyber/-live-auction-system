@@ -1,3 +1,4 @@
+import { useAuctionEvents } from "./useAuctionEvents.js";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getAuctions,
@@ -10,26 +11,32 @@ import {
 } from "../services/auction.service.js";
 
 export const useGetAuctions = (page = 1) => {
+  useAuctionEvents();
   return useQuery({
     queryKey: ["auctions", page],
     queryFn: () => getAuctions({ page }),
     keepPreviousData: true,
+    refetchInterval: 3000,
   });
 };
 
 export const useGetMyAuctions = (page = 1) => {
+  useAuctionEvents();
   return useQuery({
     queryKey: ["myAuctions", page],
     queryFn: () => getMyAuctions({ page }),
     keepPreviousData: true,
+    refetchInterval: 3000,
   });
 };
 
-export const useGetMyBids = (page = 1) => {
+export const useGetMyBids = (page = 1, status = "active") => {
+  useAuctionEvents();
   return useQuery({
-    queryKey: ["myBids", page],
-    queryFn: () => getMyBids({ page }),
+    queryKey: ["myBids", page, status],
+    queryFn: () => getMyBids({ page, status }),
     keepPreviousData: true,
+    refetchInterval: 3000,
   });
 };
 
@@ -38,6 +45,8 @@ export const useViewAuction = (id) => {
     queryKey: ["auction", id],
     queryFn: () => viewAuction(id),
     enabled: !!id,
+    refetchInterval: 2000,
+    structuralSharing: (oldData, newData) => oldData?._id === newData?._id && oldData.version > newData.version ? oldData : newData,
   });
 };
 
@@ -47,11 +56,12 @@ export const usePlaceBid = () => {
   return useMutation({
     mutationFn: ({ bidAmount, id }) => placeBid({ bidAmount, id }),
     onSuccess: (data, variables) => {
-      queryClient.invalidateQueries(["auction", variables.id]);
-      queryClient.invalidateQueries(["auctions"]);
-      queryClient.invalidateQueries(["myAuctions"]);
-      queryClient.invalidateQueries(["myBids"]);
-      queryClient.invalidateQueries(["dashboardStats"]);
+      queryClient.setQueryData(["auction", variables.id], (old) => old?.version > data.auction.version ? old : data.auction);
+      queryClient.invalidateQueries({ queryKey: ["auction", variables.id] });
+      queryClient.invalidateQueries({ queryKey: ["auctions"] });
+      queryClient.invalidateQueries({ queryKey: ["myAuctions"] });
+      queryClient.invalidateQueries({ queryKey: ["myBids"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboardStats"] });
     },
   });
 };
@@ -62,9 +72,9 @@ export const useCreateAuction = (options = {}) => {
   return useMutation({
     mutationFn: (data) => createAuction(data),
     onSuccess: (...args) => {
-      queryClient.invalidateQueries(["auctions"]);
-      queryClient.invalidateQueries(["myAuctions"]);
-      queryClient.invalidateQueries(["dashboardStats"]);
+      queryClient.invalidateQueries({ queryKey: ["auctions"] });
+      queryClient.invalidateQueries({ queryKey: ["myAuctions"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboardStats"] });
       options.onSuccess?.(...args);
     },
     onError: options.onError,
@@ -72,6 +82,7 @@ export const useCreateAuction = (options = {}) => {
 };
 
 export const useDashboardStats = () => {
+  useAuctionEvents();
   return useQuery({
     queryKey: ["dashboardStats"],
     queryFn: dashboardStats,
@@ -108,8 +119,8 @@ export const usePrefetchHandlers = () => {
 
   const prefetchMyBids = (page = 1) => {
     queryClient.prefetchQuery({
-      queryKey: ["myBids", page],
-      queryFn: () => getMyBids({ page }),
+      queryKey: ["myBids", page, status],
+      queryFn: () => getMyBids({ page, status }),
       staleTime: 30_000,
     });
   };

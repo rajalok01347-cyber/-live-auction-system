@@ -8,9 +8,9 @@ import { useDocumentTitle } from "../hooks/useDocumentTitle";
 export const MyBids = () => {
   useDocumentTitle("My Bids");
   const [page, setPage] = useState(1);
-  const [filter, setFilter] = useState("all");
+  const [filter, setFilter] = useState("active");
   const navigate = useNavigate();
-  const { data, isLoading } = useGetMyBids(page);
+  const { data, isLoading } = useGetMyBids(page, filter);
 
   if (isLoading) return <LoadingScreen />;
 
@@ -18,12 +18,7 @@ export const MyBids = () => {
   const auctions = Array.isArray(rawData) ? rawData : rawData.auctions || [];
   const pagination = Array.isArray(rawData) ? {} : rawData.pagination || {};
 
-  const filteredAuctions =
-    filter === "all"
-      ? auctions
-      : filter === "active"
-        ? auctions.filter((a) => !a.isExpired)
-        : auctions.filter((a) => a.isExpired);
+  const filteredAuctions = auctions;
 
   return (
     <div className="min-h-screen bg-gray-50/80">
@@ -60,10 +55,10 @@ export const MyBids = () => {
         {/* Filters */}
         <div className="mb-8">
           <div className="flex flex-wrap gap-2">
-            {["all", "active", "ended"].map((f) => (
+            {["active", "won", "lost", "all"].map((f) => (
               <button
                 key={f}
-                onClick={() => setFilter(f)}
+                onClick={() => { setFilter(f); setPage(1); }}
                 className={`px-4 py-2 rounded-full text-sm font-medium transition-all ${
                   filter === f
                     ? "bg-indigo-600 text-white shadow-sm"

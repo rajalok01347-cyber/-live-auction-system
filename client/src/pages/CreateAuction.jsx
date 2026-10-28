@@ -30,6 +30,7 @@ export const CreateAuction = () => {
     itemDescription: "",
     itemCategory: "",
     startingPrice: "",
+    increment: "1",
     itemStartDate: "",
     itemEndDate: "",
   });
@@ -49,6 +50,7 @@ export const CreateAuction = () => {
         itemDescription: "",
         itemCategory: "",
         startingPrice: "",
+    increment: "1",
         itemStartDate: "",
         itemEndDate: "",
       });
@@ -212,23 +214,27 @@ export const CreateAuction = () => {
 
     mutate({
       ...formData,
+      startingPrice: Number(formData.startingPrice),
+      increment: Number(formData.increment),
+      itemStartDate: start.toISOString(),
+      itemEndDate: end.toISOString(),
       formId: uploadMeta.formId,
       public_id: uploadMeta.public_id,
       secure_url: uploadMeta.secure_url,
     });
   };
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0,16);
 
   const maxStart = new Date();
   maxStart.setDate(maxStart.getDate() + 15);
-  const maxStartDate = maxStart.toISOString().split("T")[0];
+  const maxStartDate = new Date(+maxStart - maxStart.getTimezoneOffset() * 60000).toISOString().slice(0,16);
 
   let maxEndDate = "";
   if (formData.itemStartDate) {
     const end = new Date(formData.itemStartDate);
     end.setDate(end.getDate() + 15);
-    maxEndDate = end.toISOString().split("T")[0];
+    maxEndDate = new Date(+end - end.getTimezoneOffset() * 60000).toISOString().slice(0,16);
   }
 
   const inputClasses =
@@ -348,8 +354,8 @@ export const CreateAuction = () => {
                       name="startingPrice"
                       value={formData.startingPrice}
                       onChange={handleInputChange}
-                      min="1"
-                      step="1"
+                      min="0.01"
+                      step="0.01"
                       className={`${inputClasses} pl-10`}
                       placeholder="100"
                       required
@@ -358,6 +364,11 @@ export const CreateAuction = () => {
                 </div>
               </div>
 
+              <div className="mb-5">
+                <label htmlFor="increment" className="block text-sm font-medium text-gray-700 mb-1.5">Minimum bid increment (Rs)</label>
+                <input id="increment" name="increment" type="number" min="0.01" step="0.01" value={formData.increment} onChange={handleInputChange} className={inputClasses} required />
+                <p className="mt-2 text-xs text-gray-500">English auction. First bid may equal the starting price; later bids must meet this increment. Bidding closes at the stated end time.</p>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div>
                   <label
@@ -367,7 +378,7 @@ export const CreateAuction = () => {
                     Start Date
                   </label>
                   <input
-                    type="date"
+                    type="datetime-local"
                     id="itemStartDate"
                     name="itemStartDate"
                     min={today}
@@ -387,7 +398,7 @@ export const CreateAuction = () => {
                     End Date
                   </label>
                   <input
-                    type="date"
+                    type="datetime-local"
                     id="itemEndDate"
                     name="itemEndDate"
                     value={formData.itemEndDate}

@@ -14,8 +14,8 @@ export const getMyAuctions = async ({ page = 1, limit = 12 } = {}) => {
 };
 
 // getting list of auctions user has bid on
-export const getMyBids = async ({ page = 1, limit = 12 } = {}) => {
-  const res = await api.get(`/auction/mybids?page=${page}&limit=${limit}`);
+export const getMyBids = async ({ page = 1, limit = 12, status = "active" } = {}) => {
+  const res = await api.get(`/auction/mybids?page=${page}&limit=${limit}&status=${status}`);
   return res.data;
 };
 
@@ -36,6 +36,7 @@ export const createAuction = async (data) => {
   const payload = {
     itemName: data.itemName,
     startingPrice: data.startingPrice,
+    increment: data.increment,
     itemDescription: data.itemDescription,
     itemCategory: data.itemCategory,
     itemStartDate: data.itemStartDate,
@@ -62,6 +63,15 @@ export const uploadImageToCloudinary = async ({
   signatureData,
   onProgress,
 }) => {
+  if (signatureData.local) {
+    const res = await api.post(`/upload/local?formId=${encodeURIComponent(signatureData.formId)}`, file, {
+      headers: { "Content-Type": file.type },
+      onUploadProgress: (event) => {
+        if (onProgress && event.total) onProgress(Math.round(event.loaded * 100 / event.total));
+      },
+    });
+    return res.data;
+  }
   const cloudinaryFormData = new FormData();
   cloudinaryFormData.append("file", file);
   cloudinaryFormData.append("api_key", signatureData.apiKey);
